@@ -7,7 +7,7 @@ readonly -a CARGOS=(6 7 5 3 1)
 BASE_URL="${TSE_RESULTS_BASE_URL:-$DEFAULT_BASE_URL}"
 YEAR="${TSE_RESULTS_YEAR:-2026}"
 UF="${TSE_RESULTS_UF:-ma}"
-MUNICIPIO="${TSE_RESULTS_MUNICIPALITY:-07242}"
+MUNICIPIO="${TSE_RESULTS_MUNICIPALITY:-todos}"   # "todos" ou códigos TSE de 5 dígitos separados por vírgula
 LIMIT="${TSE_RESULTS_LIMIT:-20}"
 FEDERAL_ELECTION="${TSE_RESULTS_FEDERAL_ELECTION:-6257}"
 STATE_ELECTION="${TSE_RESULTS_STATE_ELECTION:-6259}"
@@ -21,7 +21,7 @@ usage() {
 Uso: buscador.sh [opções]
 
 Opções:
-  -m, --municipio CODIGO  Código TSE do município, 5 dígitos (padrão: 07242)
+  -m, --municipio CODIGOS "todos" (padrão) ou códigos TSE de 5 dígitos separados por vírgula
   -u, --uf UF             Sigla da UF (padrão: ma)
   -l, --limite N          Candidatos por cargo (padrão: 20)
   -h, --help              Mostra esta ajuda
@@ -45,7 +45,8 @@ done
 command -v curl >/dev/null || die "curl não encontrado (instale com: sudo apt install curl)"
 command -v jq >/dev/null || die "jq não encontrado (instale com: sudo apt install jq)"
 [[ "$UF" =~ ^[[:alpha:]]{2}$ ]] || die "TSE_RESULTS_UF deve conter duas letras"
-[[ "$MUNICIPIO" =~ ^[0-9]{5}$ ]] || die "TSE_RESULTS_MUNICIPALITY deve conter cinco dígitos"
+[[ "$MUNICIPIO" == todos || "$MUNICIPIO" =~ ^[0-9]{5}(,[0-9]{5})*$ ]] \
+  || die "município deve ser 'todos' ou códigos de 5 dígitos separados por vírgula"
 [[ "$YEAR" =~ ^[0-9]{4}$ ]] || die "TSE_RESULTS_YEAR deve conter quatro dígitos"
 [[ "$LIMIT" =~ ^[1-9][0-9]*$ ]] || die "TSE_RESULTS_LIMIT deve ser um inteiro positivo"
 [[ "$FEDERAL_ELECTION" =~ ^[0-9]+$ && "$STATE_ELECTION" =~ ^[0-9]+$ ]] || die "códigos de eleição devem ser numéricos"
@@ -102,22 +103,54 @@ election_for_cargo() {
   esac
 }
 
-for cargo in "${CARGOS[@]}"; do
-  election="$(election_for_cargo "$cargo")"
-  file="$tmp_dir/cargo-$cargo.json"
-  printf -v cargo_padded '%04d' "$cargo"
-  printf -v election_padded '%06d' "$election"
-  url="$BASE_URL/ele$YEAR/$election/dados/$UF/${UF}${MUNICIPIO}-c${cargo_padded}-e${election_padded}-u.json"
-
+fetch() {
+  local url="$1" dest="$2"
   curl --fail --silent --show-error --location \
     --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
-    --output "$file" "$url" || die "falha ao consultar o cargo $cargo"
-  jq -e '.carg | type == "array"' "$file" >/dev/null || die "resposta inválida para o cargo $cargo"
+    --output "$dest" "$url"
+}
+
+# Imprime "codigo<TAB>nome" para cada município a consultar.
+list_municipios() {
+  if [[ "$MUNICIPIO" != todos ]]; then
+    tr ',' '\n' <<<"$MUNICIPIO" | awk '{ print $1 "\tmunicípio " $1 }'
+    return 0
+  fi
+
+  local election_padded url file="$tmp_dir/municipios.json"
+  printf -v election_padded '%06d' "$((10#$STATE_ELECTION))"
+  url="$BASE_URL/ele$YEAR/$STATE_ELECTION/config/mun-e${election_padded}-cm.json"
+  fetch "$url" "$file" \
+    || die "não foi possível obter a lista de municípios ($url). Use --municipio com códigos específicos."
+
+  jq -r --arg uf "$UF" '
+    .abr[]
+    | select(((.cd // .cdabr // "") | ascii_downcase) == $uf)
+    | .mu[]
+    | [(.cd | tostring), .nm] | @tsv
+  ' "$file" | sort -t$'\t' -k2,2 \
+    || die "resposta inválida na lista de municípios"
+}
+
+# Exibe a tabela de um cargo em um município.
+show_cargo() {
+  local mun="$1" cargo="$2" election
+  local file cargo_padded election_padded url cargo_name rows_file
+  local -a rows
+
+  election="$(election_for_cargo "$cargo")"
+  file="$tmp_dir/cargo-$mun-$cargo.json"
+  printf -v cargo_padded '%04d' "$cargo"
+  printf -v election_padded '%06d' "$election"
+  url="$BASE_URL/ele$YEAR/$election/dados/$UF/${UF}${mun}-c${cargo_padded}-e${election_padded}-u.json"
+
+  fetch "$url" "$file" || die "falha ao consultar o cargo $cargo em $mun"
+  jq -e '.carg | type == "array"' "$file" >/dev/null || die "resposta inválida para o cargo $cargo em $mun"
 
   cargo_name="$(jq -r --arg cargo "$cargo" '.carg[] | select(.cd == $cargo) | .nmn' "$file" | head -n 1)"
-  [[ -n "$cargo_name" ]] || die "cargo $cargo ausente na resposta"
-  printf '\n%s (cargo %s)\n' "$cargo_name" "$cargo"
-  rows_file="$tmp_dir/cargo-$cargo.tsv"
+  [[ -n "$cargo_name" ]] || die "cargo $cargo ausente na resposta de $mun"
+  printf '\n  %s (cargo %s)\n' "$cargo_name" "$cargo"
+  rows_file="$tmp_dir/cargo-$mun-$cargo.tsv"
   jq -r --arg cargo "$cargo" --argjson limit "$LIMIT" '
     [
       .carg[] | select(.cd == $cargo)
@@ -132,4 +165,15 @@ for cargo in "${CARGOS[@]}"; do
   ' "$file" >"$rows_file"
   mapfile -t rows <"$rows_file"
   print_table rows
+}
+
+mapfile -t municipios < <(list_municipios)
+(( ${#municipios[@]} > 0 )) || die "nenhum município encontrado para a UF '$UF'"
+
+for linha in "${municipios[@]}"; do
+  IFS=$'\t' read -r mun_cod mun_nome <<<"$linha"
+  printf '\n### %s (%s)\n' "$mun_nome" "$mun_cod"
+  for cargo in "${CARGOS[@]}"; do
+    show_cargo "$mun_cod" "$cargo"
+  done
 done
