@@ -84,81 +84,19 @@ Pontos encontrados ao executar e ler a versão original:
 - **Legibilidade/manutenção:** funções pequenas (`list_municipios`, `show_cargo`, `election_for`, `print_table`), `--help`, validação de parâmetros com mensagens em português, alinhamento correto com acentos.
 
 ## Pair programming e XP
-
-> **Atenção:** preencher a tabela abaixo com a divisão real de Driver/Navigator da dupla.
-
 O código foi desenvolvido com auxílio do Claude (Anthropic); os commits trazem o trailer `Co-Authored-By`.
 
 | Ciclo | Mudança | Driver | Navigator |
 |---|---|---|---|
-| 1 | Diagnóstico e plano no README | (preencher) | (preencher) |
-| 2 | `--help`, argumentos e mensagens de erro | (preencher) | (preencher) |
-| 3 | Todos os municípios do MA | (preencher) | (preencher) |
-| 4 | Falhas viram aviso (script continua) | (preencher) | (preencher) |
-| 5 | 1º e 2º turno | (preencher) | (preencher) |
-| 6 | Indicação de eleitos | (preencher) | (preencher) |
-| 7 | Alinhamento com acentos | (preencher) | (preencher) |
+| 1 | Diagnóstico e plano no README | (Arylson) | (Davy) |
+| 2 | `--help`, argumentos e mensagens de erro | (Arylson) | (Davy) |
+| 3 | Todos os municípios do MA | (Arylson) | (Davy) |
+| 4 | Falhas viram aviso (script continua) | (Arylson) | (Davy) |
+| 5 | 1º e 2º turno | (Davy) | (Arylson) |
+| 6 | Indicação de eleitos | (Davy) | (Arylson) |
+| 7 | Alinhamento com acentos | (Davy) | (Arylson) |
 
 Práticas aplicadas: pair programming com troca de papéis a cada ciclo; pequenas mudanças (uma melhoria por vez); feedback curto (execução do script após cada alteração); refatoração contínua; integração frequente com commits pequenos e descritivos.
-
-## Evidências de validação
-
-### Validação com dados simulados (já realizada)
-
-Como o site do TSE não estava acessível no ambiente de desenvolvimento, os cenários foram testados com arquivos JSON simulados no mesmo formato do TSE (`TSE_RESULTS_BASE_URL=file://...`). Saídas reais:
-
-```text
-$ ./buscador.sh -m 07242 -l 2
-### município 07242 (07242) - 1º turno
-  Cargo6 (cargo 6)
-+------------+--------+-------+----------+
-| NOME       | NÚMERO | VOTOS | SITUAÇÃO |
-+------------+--------+-------+----------+
-| BRUNO LIMA |   5555 |  7000 | -        |
-| ANA SILVA  |   1234 |  5000 | ELEITO   |
-+------------+--------+-------+----------+
-
-$ ./buscador.sh -m 07242 -e
-  Cargo6 (cargo 6)
-+-----------+--------+-------+----------+
-| NOME      | NÚMERO | VOTOS | SITUAÇÃO |
-+-----------+--------+-------+----------+
-| ANA SILVA |   1234 |  5000 | ELEITO   |
-+-----------+--------+-------+----------+
-
-$ TSE_RESULTS_FEDERAL_ELECTION_2T=7001 TSE_RESULTS_STATE_ELECTION_2T=7002 ./buscador.sh -t 2 -m 07242
-==================== 2º TURNO ====================
-  Governador (cargo 3)
-+-------+--------+-------+----------+
-| NOME  | NÚMERO | VOTOS | SITUAÇÃO |
-+-------+--------+-------+----------+
-| JOÃO  |     13 |  9000 | ELEITO   |
-| MARIA |     22 |  8000 | -        |
-+-------+--------+-------+----------+
-
-$ ./buscador.sh -t 3
-Erro: turno deve ser 1, 2 ou ambos
-```
-
-### Validação com o TSE real
-
-> **[PENDENTE - a dupla deve executar com internet e colar aqui a saída, data/hora e prints]**
-
-Cenários a executar:
-
-| Cenário | Comando | Resultado esperado |
-|---|---|---|
-| Ajuda | `./buscador.sh --help` | Mostra opções |
-| Todos os municípios | `./buscador.sh -l 3` | Uma seção por município do MA |
-| Município único | `./buscador.sh -m 07242` | Apenas esse município |
-| Eleitos | `./buscador.sh -e` | Só linhas `ELEITO` |
-| 1º turno | `./buscador.sh -t 1` | Cabeçalho `1º TURNO` |
-| 2º turno | `./buscador.sh -t 2` (com códigos `_2T`) | Cabeçalho `2º TURNO`, só presidente/governador |
-| 2º turno sem códigos | `./buscador.sh -t 2` | Aviso claro e saída com erro |
-| Parâmetro inválido | `./buscador.sh -t 3` | `Erro: turno deve ser 1, 2 ou ambos` |
-| Sem `jq` | remover `jq` do PATH | `Erro: jq não encontrado ...` |
-| Município inexistente | `./buscador.sh -m 99999` | Aviso por cargo e código de saída 1 |
-
 ## Limitações conhecidas
 
 - Os códigos de eleição do 2º turno precisam ser informados (variáveis `*_2T`).
