@@ -57,6 +57,9 @@ BASE_URL="${BASE_URL%/}"
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
+ok_count=0
+fail_count=0
+
 use_color=false
 if [[ "$COLOR_MODE" == always ]] || { [[ "$COLOR_MODE" == auto && -t 1 && "${TERM:-dumb}" != dumb ]] && [[ ! -v NO_COLOR ]]; }; then
   use_color=true
@@ -107,7 +110,7 @@ fetch() {
   local url="$1" dest="$2"
   curl --fail --silent --show-error --location \
     --retry 3 --retry-all-errors --connect-timeout 10 --max-time 30 \
-    --output "$dest" "$url"
+    --output "$dest" "$url" 2>"$tmp_dir/curl.err"
 }
 
 # Imprime "codigo<TAB>nome" para cada município a consultar.
@@ -121,7 +124,7 @@ list_municipios() {
   printf -v election_padded '%06d' "$((10#$STATE_ELECTION))"
   url="$BASE_URL/ele$YEAR/$STATE_ELECTION/config/mun-e${election_padded}-cm.json"
   fetch "$url" "$file" \
-    || die "não foi possível obter a lista de municípios ($url). Use --municipio com códigos específicos."
+    || die "não foi possível obter a lista de municípios ($url): $(tail -n 1 "$tmp_dir/curl.err"). Use --municipio com códigos específicos."
 
   jq -r --arg uf "$UF" '
     .abr[]
@@ -144,11 +147,24 @@ show_cargo() {
   printf -v election_padded '%06d' "$election"
   url="$BASE_URL/ele$YEAR/$election/dados/$UF/${UF}${mun}-c${cargo_padded}-e${election_padded}-u.json"
 
-  fetch "$url" "$file" || die "falha ao consultar o cargo $cargo em $mun"
-  jq -e '.carg | type == "array"' "$file" >/dev/null || die "resposta inválida para o cargo $cargo em $mun"
+  if ! fetch "$url" "$file"; then
+    warn "sem dados para cargo $cargo em $mun: $(tail -n 1 "$tmp_dir/curl.err")"
+    fail_count=$((fail_count + 1))
+    return 0
+  fi
+  if ! jq -e '.carg | type == "array"' "$file" >/dev/null 2>&1; then
+    warn "resposta inválida para cargo $cargo em $mun"
+    fail_count=$((fail_count + 1))
+    return 0
+  fi
 
   cargo_name="$(jq -r --arg cargo "$cargo" '.carg[] | select(.cd == $cargo) | .nmn' "$file" | head -n 1)"
-  [[ -n "$cargo_name" ]] || die "cargo $cargo ausente na resposta de $mun"
+  if [[ -z "$cargo_name" ]]; then
+    warn "cargo $cargo ausente na resposta de $mun"
+    fail_count=$((fail_count + 1))
+    return 0
+  fi
+  ok_count=$((ok_count + 1))
   printf '\n  %s (cargo %s)\n' "$cargo_name" "$cargo"
   rows_file="$tmp_dir/cargo-$mun-$cargo.tsv"
   jq -r --arg cargo "$cargo" --argjson limit "$LIMIT" '
@@ -164,7 +180,11 @@ show_cargo() {
     | [.nome, .numero, (.votos | tostring)] | @tsv
   ' "$file" >"$rows_file"
   mapfile -t rows <"$rows_file"
-  print_table rows
+  if (( ${#rows[@]} == 0 )); then
+    printf '  (nenhum candidato para exibir)\n'
+  else
+    print_table rows
+  fi
 }
 
 mapfile -t municipios < <(list_municipios)
@@ -177,3 +197,6 @@ for linha in "${municipios[@]}"; do
     show_cargo "$mun_cod" "$cargo"
   done
 done
+
+printf '\nConsultas concluídas: %d com sucesso, %d sem dados.\n' "$ok_count" "$fail_count" >&2
+(( ok_count > 0 )) || die "nenhum resultado obtido"
