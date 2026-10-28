@@ -14,8 +14,36 @@ STATE_ELECTION="${TSE_RESULTS_STATE_ELECTION:-6259}"
 COLOR_MODE="${TSE_RESULTS_COLOR:-auto}"
 
 die() { printf 'Erro: %s\n' "$*" >&2; exit 1; }
-command -v curl >/dev/null || die "curl não encontrado"
-command -v jq >/dev/null || die "jq não encontrado"
+warn() { printf 'Aviso: %s\n' "$*" >&2; }
+
+usage() {
+  cat <<'EOF'
+Uso: buscador.sh [opções]
+
+Opções:
+  -m, --municipio CODIGO  Código TSE do município, 5 dígitos (padrão: 07242)
+  -u, --uf UF             Sigla da UF (padrão: ma)
+  -l, --limite N          Candidatos por cargo (padrão: 20)
+  -h, --help              Mostra esta ajuda
+
+Variáveis de ambiente (opcionais): TSE_RESULTS_BASE_URL, TSE_RESULTS_YEAR,
+TSE_RESULTS_UF, TSE_RESULTS_MUNICIPALITY, TSE_RESULTS_LIMIT, TSE_RESULTS_COLOR,
+TSE_RESULTS_FEDERAL_ELECTION, TSE_RESULTS_STATE_ELECTION
+EOF
+}
+
+while (( $# )); do
+  case "$1" in
+    -h|--help) usage; exit 0 ;;
+    -m|--municipio) [[ $# -ge 2 ]] || die "$1 exige um valor"; MUNICIPIO="$2"; shift 2 ;;
+    -u|--uf)        [[ $# -ge 2 ]] || die "$1 exige um valor"; UF="$2"; shift 2 ;;
+    -l|--limite)    [[ $# -ge 2 ]] || die "$1 exige um valor"; LIMIT="$2"; shift 2 ;;
+    *) die "opção desconhecida: $1 (use --help)" ;;
+  esac
+done
+
+command -v curl >/dev/null || die "curl não encontrado (instale com: sudo apt install curl)"
+command -v jq >/dev/null || die "jq não encontrado (instale com: sudo apt install jq)"
 [[ "$UF" =~ ^[[:alpha:]]{2}$ ]] || die "TSE_RESULTS_UF deve conter duas letras"
 [[ "$MUNICIPIO" =~ ^[0-9]{5}$ ]] || die "TSE_RESULTS_MUNICIPALITY deve conter cinco dígitos"
 [[ "$YEAR" =~ ^[0-9]{4}$ ]] || die "TSE_RESULTS_YEAR deve conter quatro dígitos"
