@@ -71,6 +71,11 @@ done
 
 UF="${UF,,}"
 BASE_URL="${BASE_URL%/}"
+
+# Garante UTF-8 para que acentos sejam contados como um caractere só.
+if [[ "$(locale charmap 2>/dev/null || true)" != UTF-8 ]]; then
+  export LC_ALL=C.UTF-8
+fi
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT
 
@@ -87,6 +92,10 @@ print_rule() {
   printf '+-%*s-+-%*s-+-%*s-+-%*s-+\n' "$w1" '' "$w2" '' "$w3" '' "$w4" '' | tr ' ' '-'
 }
 
+# printf '%-*s' conta bytes; para alinhar acentos usamos o tamanho em caracteres.
+pad_right() { printf '%s%*s' "$1" "$(( $2 - ${#1} ))" ''; }
+pad_left()  { printf '%*s%s' "$(( $2 - ${#1} ))" '' "$1"; }
+
 # Recebe o nome de um array com linhas TSV (nome, número, votos, situação).
 print_table() {
   local -n table_rows="$1"
@@ -101,15 +110,19 @@ print_table() {
     if (( ${#status} > w4 )); then w4=${#status}; fi
   done
 
+  local line
   print_rule "$w1" "$w2" "$w3" "$w4"
-  printf '| %-*s | %*s | %*s | %-*s |\n' "$w1" "$name_header" "$w2" "$number_header" "$w3" "$votes_header" "$w4" "$status_header"
+  printf '| %s | %s | %s | %s |\n' "$(pad_right "$name_header" "$w1")" "$(pad_left "$number_header" "$w2")" \
+    "$(pad_left "$votes_header" "$w3")" "$(pad_right "$status_header" "$w4")"
   print_rule "$w1" "$w2" "$w3" "$w4"
   for row in "${table_rows[@]}"; do
     IFS=$'\t' read -r name number votes status <<<"$row"
+    line="$(printf '| %s | %s | %s | %s |' "$(pad_right "$name" "$w1")" "$(pad_left "$number" "$w2")" \
+      "$(pad_left "$votes" "$w3")" "$(pad_right "$status" "$w4")")"
     if $use_color && [[ "$status" == ELEITO* ]]; then
-      printf '\033[1;32m| %-*s | %*s | %*s | %-*s |\033[0m\n' "$w1" "$name" "$w2" "$number" "$w3" "$votes" "$w4" "$status"
+      printf '\033[1;32m%s\033[0m\n' "$line"
     else
-      printf '| %-*s | %*s | %*s | %-*s |\n' "$w1" "$name" "$w2" "$number" "$w3" "$votes" "$w4" "$status"
+      printf '%s\n' "$line"
     fi
   done
   print_rule "$w1" "$w2" "$w3" "$w4"
