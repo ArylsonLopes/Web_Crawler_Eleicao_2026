@@ -10,6 +10,7 @@ UF="${TSE_RESULTS_UF:-ma}"
 MUNICIPIO="${TSE_RESULTS_MUNICIPALITY:-todos}"   # "todos" ou códigos TSE de 5 dígitos separados por vírgula
 LIMIT="${TSE_RESULTS_LIMIT:-20}"
 TURNO="${TSE_RESULTS_TURN:-1}"                   # 1, 2 ou ambos
+ONLY_ELECTED=false
 
 # Códigos de eleição do TSE (diferentes para cada turno).
 FEDERAL_ELECTION_1T="${TSE_RESULTS_FEDERAL_ELECTION:-6257}"
@@ -29,7 +30,8 @@ Opções:
   -m, --municipio CODIGOS "todos" (padrão) ou códigos TSE de 5 dígitos separados por vírgula
   -u, --uf UF             Sigla da UF (padrão: ma)
   -t, --turno 1|2|ambos   Turno a exibir (padrão: 1)
-  -l, --limite N          Candidatos por cargo (padrão: 20)
+  -l, --limite N          Candidatos por cargo (padrão: 20; eleitos sempre aparecem)
+  -e, --so-eleitos        Mostra somente candidatos eleitos
   -h, --help              Mostra esta ajuda
 
 Variáveis de ambiente (opcionais): TSE_RESULTS_BASE_URL, TSE_RESULTS_YEAR,
@@ -48,6 +50,7 @@ while (( $# )); do
     -m|--municipio) [[ $# -ge 2 ]] || die "$1 exige um valor"; MUNICIPIO="$2"; shift 2 ;;
     -u|--uf)        [[ $# -ge 2 ]] || die "$1 exige um valor"; UF="$2"; shift 2 ;;
     -t|--turno)     [[ $# -ge 2 ]] || die "$1 exige um valor"; TURNO="$2"; shift 2 ;;
+    -e|--so-eleitos) ONLY_ELECTED=true; shift ;;
     -l|--limite)    [[ $# -ge 2 ]] || die "$1 exige um valor"; LIMIT="$2"; shift 2 ;;
     *) die "opção desconhecida: $1 (use --help)" ;;
   esac
@@ -80,37 +83,39 @@ if [[ "$COLOR_MODE" == always ]] || { [[ "$COLOR_MODE" == auto && -t 1 && "${TER
 fi
 
 print_rule() {
-  local name_width="$1" number_width="$2" votes_width="$3"
-  printf '+-%*s-+-%*s-+-%*s-+\n' "$name_width" '' "$number_width" '' "$votes_width" '' | tr ' ' '-'
+  local w1="$1" w2="$2" w3="$3" w4="$4"
+  printf '+-%*s-+-%*s-+-%*s-+-%*s-+\n' "$w1" '' "$w2" '' "$w3" '' "$w4" '' | tr ' ' '-'
 }
 
+# Recebe o nome de um array com linhas TSV (nome, número, votos, situação).
 print_table() {
   local -n table_rows="$1"
-  local name_width=${#name_header} number_width=${#number_header} votes_width=${#votes_header}
-  local row name number votes
+  local w1=${#name_header} w2=${#number_header} w3=${#votes_header} w4=${#status_header}
+  local row name number votes status
 
   for row in "${table_rows[@]}"; do
-    IFS=$'\t' read -r name number votes <<<"$row"
-    (( ${#name} > name_width )) && name_width=${#name}
-    (( ${#number} > number_width )) && number_width=${#number}
-    (( ${#votes} > votes_width )) && votes_width=${#votes}
+    IFS=$'\t' read -r name number votes status <<<"$row"
+    if (( ${#name} > w1 )); then w1=${#name}; fi
+    if (( ${#number} > w2 )); then w2=${#number}; fi
+    if (( ${#votes} > w3 )); then w3=${#votes}; fi
+    if (( ${#status} > w4 )); then w4=${#status}; fi
   done
 
-  print_rule "$name_width" "$number_width" "$votes_width"
-  printf '| %-*s | %*s | %*s |\n' "$name_width" "$name_header" "$number_width" "$number_header" "$votes_width" "$votes_header"
-  print_rule "$name_width" "$number_width" "$votes_width"
+  print_rule "$w1" "$w2" "$w3" "$w4"
+  printf '| %-*s | %*s | %*s | %-*s |\n' "$w1" "$name_header" "$w2" "$number_header" "$w3" "$votes_header" "$w4" "$status_header"
+  print_rule "$w1" "$w2" "$w3" "$w4"
   for row in "${table_rows[@]}"; do
-    IFS=$'\t' read -r name number votes <<<"$row"
-    if $use_color; then
-      printf '| \033[36m%-*s\033[0m | %*s | \033[32m%*s\033[0m |\n' "$name_width" "$name" "$number_width" "$number" "$votes_width" "$votes"
+    IFS=$'\t' read -r name number votes status <<<"$row"
+    if $use_color && [[ "$status" == ELEITO* ]]; then
+      printf '\033[1;32m| %-*s | %*s | %*s | %-*s |\033[0m\n' "$w1" "$name" "$w2" "$number" "$w3" "$votes" "$w4" "$status"
     else
-      printf '| %-*s | %*s | %*s |\n' "$name_width" "$name" "$number_width" "$number" "$votes_width" "$votes"
+      printf '| %-*s | %*s | %*s | %-*s |\n' "$w1" "$name" "$w2" "$number" "$w3" "$votes" "$w4" "$status"
     fi
   done
-  print_rule "$name_width" "$number_width" "$votes_width"
+  print_rule "$w1" "$w2" "$w3" "$w4"
 }
 
-readonly name_header="NOME" number_header="NÚMERO" votes_header="VOTOS"
+readonly name_header="NOME" number_header="NÚMERO" votes_header="VOTOS" status_header="SITUAÇÃO"
 
 # Código da eleição para (turno, cargo). Retorna 1 se o cargo não tem esse turno.
 election_for() {
@@ -184,17 +189,28 @@ show_cargo() {
   ok_count=$((ok_count + 1))
   printf '\n  %s (cargo %s)\n' "$cargo_name" "$cargo"
   rows_file="$tmp_dir/cargo-$turno-$mun-$cargo.tsv"
-  jq -r --arg cargo "$cargo" --argjson limit "$LIMIT" '
+  jq -r --arg cargo "$cargo" --argjson limit "$LIMIT" --argjson only "$ONLY_ELECTED" '
     [
       .carg[] | select(.cd == $cargo)
       | .. | objects | .cand? // empty | .[]
       | select((.nmu // "") != "" and (.n // "") != "")
-      | { nome: (.nmu | gsub("[[:cntrl:]]"; " ")), numero: .n, votos: ((.vap // "0") | tonumber) }
+      | {
+          nome: (.nmu | gsub("[[:cntrl:]]"; " ")),
+          numero: .n,
+          votos: ((.vap // "0") | tonumber),
+          eleito: (((.e // "") | ascii_downcase) == "s"
+                   or ((.st // "") | ascii_downcase | test("^eleito"))),
+          segundo: ((.st // "") | ascii_downcase | test("2.{0,2}turno"))
+        }
     ]
     | unique_by(.numero)
     | sort_by([-.votos, (.nome | ascii_downcase), .numero])
-    | .[:$limit][]
-    | [.nome, .numero, (.votos | tostring)] | @tsv
+    | (.[:$limit] + (.[$limit:] | map(select(.eleito)))) as $lista
+    | $lista[]
+    | select(($only | not) or .eleito)
+    | [.nome, .numero, (.votos | tostring),
+       (if .eleito then "ELEITO" elif .segundo then "2º TURNO" else "-" end)]
+    | @tsv
   ' "$file" >"$rows_file"
   mapfile -t rows <"$rows_file"
   if (( ${#rows[@]} == 0 )); then
